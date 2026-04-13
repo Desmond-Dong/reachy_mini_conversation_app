@@ -11,6 +11,10 @@ from mcp.client.streamable_http import streamablehttp_client
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 
 
+CONTROL_FIELDS = {"action", "tool_name", "prompt_name", "arguments", "input_schema"}
+TARGET_MATCH_TOOLS = {"HassTurnOn", "HassTurnOff", "HassToggle"}
+
+
 def _to_jsonable(value: Any) -> Any:
     """Convert SDK objects to plain JSON-like data."""
     if hasattr(value, "model_dump"):
@@ -20,6 +24,55 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_to_jsonable(item) for item in value]
     return value
+
+
+def _extract_arguments(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Accept a few argument aliases emitted by the model and UI."""
+    for key in ("arguments", "input_schema"):
+        candidate = kwargs.get(key)
+        if isinstance(candidate, dict):
+            return candidate
+
+    passthrough = {key: value for key, value in kwargs.items() if key not in CONTROL_FIELDS}
+    return passthrough if passthrough else {}
+
+
+def _build_retry_arguments(tool_name: str, arguments: Dict[str, Any]) -> list[Dict[str, Any]]:
+    """Build language-agnostic fallback argument sets for HA target matching."""
+    if tool_name not in TARGET_MATCH_TOOLS:
+        return []
+
+    retries: list[Dict[str, Any]] = []
+    if isinstance(arguments.get("name"), str):
+        for redundant_field in ("area_name", "floor_name"):
+            if redundant_field in arguments:
+                updated = dict(arguments)
+                updated.pop(redundant_field, None)
+                if updated != arguments and updated not in retries:
+                    retries.append(updated)
+
+    return retries
+
+
+def _should_retry_match_failure(result: Any) -> bool:
+    """Return whether a tool result looks like a recoverable HA target-match failure."""
+    dumped = _to_jsonable(result)
+    if not isinstance(dumped, dict) or not dumped.get("isError"):
+        return False
+
+    content = dumped.get("content")
+    if not isinstance(content, list):
+        return False
+
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str):
+            continue
+        if "MatchFailedError" in text or "cannot target all devices" in text:
+            return True
+    return False
 
 
 class HomeAssistant(Tool):
@@ -76,8 +129,7 @@ class HomeAssistant(Tool):
         action = str(kwargs.get("action") or "").strip()
         tool_name = str(kwargs.get("tool_name") or "").strip()
         prompt_name = str(kwargs.get("prompt_name") or "").strip()
-        raw_arguments = kwargs.get("arguments") or {}
-        arguments = raw_arguments if isinstance(raw_arguments, dict) else {}
+        arguments = _extract_arguments(kwargs)
         headers = {"Authorization": f"Bearer {token}"}
 
         try:
@@ -119,9 +171,16 @@ class HomeAssistant(Tool):
                         if not tool_name:
                             return {"error": "tool_name is required for call_tool."}
                         result = await session.call_tool(tool_name, arguments=arguments or None)
+                        if _should_retry_match_failure(result):
+                            for candidate_arguments in _build_retry_arguments(tool_name, arguments):
+                                result = await session.call_tool(tool_name, arguments=candidate_arguments or None)
+                                arguments = candidate_arguments
+                                if not _should_retry_match_failure(result):
+                                    break
                         return {
                             "action": action,
                             "tool_name": tool_name,
+                            "arguments": arguments,
                             "result": _to_jsonable(result),
                         }
 

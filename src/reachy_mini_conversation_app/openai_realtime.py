@@ -683,7 +683,10 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                             logger.error("Realtime error [%s]: %s (raw=%s)", code, msg, err)
 
                         # Only show user-facing errors, not internal state errors
-                        if code not in ("input_audio_buffer_commit_empty",):
+                        if code not in (
+                            "input_audio_buffer_commit_empty",
+                            "conversation_already_has_active_response",
+                        ):
                             await self.output_queue.put(
                                 AdditionalOutputs({"role": "assistant", "content": f"[error] {msg}"})
                             )
