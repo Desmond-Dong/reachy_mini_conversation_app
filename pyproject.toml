@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv",
 
     #OpenAI
+    "mcp>=1.0.0",
     "openai>=2.30.0",
 
     #Gemini

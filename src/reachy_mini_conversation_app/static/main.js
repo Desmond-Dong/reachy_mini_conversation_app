@@ -85,6 +85,27 @@ async function saveKey(key) {
   return await resp.json();
 }
 
+async function getHomeAssistantConfig() {
+  const url = new URL("/home_assistant_config", window.location.origin);
+  url.searchParams.set("_", Date.now().toString());
+  const resp = await fetchWithTimeout(url, {}, 3000);
+  if (!resp.ok) throw new Error("home_assistant_load_failed");
+  return await resp.json();
+}
+
+async function saveHomeAssistantConfig(payload) {
+  const resp = await fetch("/home_assistant_config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(data.error || "home_assistant_save_failed");
+  }
+  return data;
+}
+
 // ---------- Personalities API ----------
 async function getPersonalities() {
   const url = new URL("/personalities", window.location.origin);
@@ -190,9 +211,17 @@ async function init() {
   const formPanel = document.getElementById("form-panel");
   const configuredPanel = document.getElementById("configured");
   const personalityPanel = document.getElementById("personality-panel");
+  const homeAssistantPanel = document.getElementById("home-assistant-panel");
   const saveBtn = document.getElementById("save-btn");
   const changeKeyBtn = document.getElementById("change-key-btn");
   const input = document.getElementById("api-key");
+  const haEnabled = document.getElementById("ha-enabled");
+  const haFields = document.getElementById("ha-fields");
+  const haUrl = document.getElementById("ha-url");
+  const haToken = document.getElementById("ha-token");
+  const haTokenNote = document.getElementById("ha-token-note");
+  const haSave = document.getElementById("save-home-assistant");
+  const haStatus = document.getElementById("home-assistant-status");
 
   // Personality elements
   const pSelect = document.getElementById("personality-select");
@@ -216,6 +245,7 @@ async function init() {
   statusEl.textContent = "Checking configuration...";
   show(formPanel, false);
   show(configuredPanel, false);
+  show(homeAssistantPanel, false);
   show(personalityPanel, false);
 
   const st = (await waitForStatus()) || { has_key: false };
@@ -223,6 +253,106 @@ async function init() {
     statusEl.textContent = "";
     show(configuredPanel, true);
   }
+
+  function renderHomeAssistantFields() {
+    const enabled = !!haEnabled.checked;
+    show(haFields, enabled);
+    if (!enabled) {
+      haStatus.textContent = "Home Assistant is disabled for this instance.";
+      haStatus.className = "status";
+    }
+  }
+
+  function clearHomeAssistantErrors() {
+    haUrl.classList.remove("error");
+    haToken.classList.remove("error");
+  }
+
+  async function refreshHomeAssistantConfig() {
+    try {
+      const data = await getHomeAssistantConfig();
+      haEnabled.checked = !!data.enabled;
+      haUrl.value = data.url || "";
+      haToken.value = "";
+      show(haTokenNote, !!data.has_token);
+      renderHomeAssistantFields();
+      if (data.configured) {
+        haStatus.textContent = "Home Assistant credentials are already configured.";
+        haStatus.className = "status ok";
+      } else if (data.enabled) {
+        haStatus.textContent = "Enter a URL and token to finish enabling Home Assistant.";
+        haStatus.className = "status warn";
+      }
+      return data;
+    } catch (e) {
+      haStatus.textContent = "Failed to load Home Assistant settings.";
+      haStatus.className = "status error";
+      return { enabled: false, configured: false, has_token: false, url: "" };
+    }
+  }
+
+  haEnabled.addEventListener("change", () => {
+    clearHomeAssistantErrors();
+    renderHomeAssistantFields();
+  });
+
+  haUrl.addEventListener("input", clearHomeAssistantErrors);
+  haToken.addEventListener("input", clearHomeAssistantErrors);
+
+  haSave.addEventListener("click", async () => {
+    const enabled = !!haEnabled.checked;
+    const url = (haUrl.value || "").trim();
+    const token = (haToken.value || "").trim();
+    const hasSavedToken = !haTokenNote.classList.contains("hidden");
+
+    clearHomeAssistantErrors();
+    if (enabled) {
+      if (!url) {
+        haStatus.textContent = "Enter a Home Assistant MCP URL.";
+        haStatus.className = "status warn";
+        haUrl.classList.add("error");
+        return;
+      }
+      if (!/^https?:\/\//i.test(url)) {
+        haStatus.textContent = "Home Assistant MCP URL must start with http:// or https://.";
+        haStatus.className = "status warn";
+        haUrl.classList.add("error");
+        return;
+      }
+      if (!token && !hasSavedToken) {
+        haStatus.textContent = "Enter a Home Assistant token or keep an existing saved token.";
+        haStatus.className = "status warn";
+        haToken.classList.add("error");
+        return;
+      }
+    }
+
+    haStatus.textContent = enabled ? "Saving Home Assistant settings..." : "Disabling Home Assistant...";
+    haStatus.className = "status";
+    try {
+      const res = await saveHomeAssistantConfig({ enabled, url, token });
+      haEnabled.checked = !!res.enabled;
+      haUrl.value = res.url || url;
+      haToken.value = "";
+      show(haTokenNote, !!res.has_token);
+      renderHomeAssistantFields();
+      haStatus.textContent = res.enabled
+        ? "Home Assistant settings saved. Enable the home_assistant tool in a personality and restart to use it."
+        : "Home Assistant disabled. Saved credentials were left intact.";
+      haStatus.className = "status ok";
+    } catch (e) {
+      if (e.message === "missing_home_assistant_url") {
+        haStatus.textContent = "Enter a Home Assistant MCP URL.";
+        haUrl.classList.add("error");
+      } else if (e.message === "missing_home_assistant_token") {
+        haStatus.textContent = "Enter a Home Assistant token.";
+        haToken.classList.add("error");
+      } else {
+        haStatus.textContent = "Failed to save Home Assistant settings.";
+      }
+      haStatus.className = "status error";
+    }
+  });
 
   // Handler for "Change API key" button
   changeKeyBtn.addEventListener("click", () => {
@@ -278,11 +408,16 @@ async function init() {
   });
 
   if (!st.has_key) {
+    show(homeAssistantPanel, true);
+    await refreshHomeAssistantConfig();
     statusEl.textContent = "";
     show(formPanel, true);
     show(loading, false);
     return;
   }
+
+  show(homeAssistantPanel, true);
+  await refreshHomeAssistantConfig();
 
   // Wait until backend routes are ready before rendering personalities UI
   const list = (await waitForPersonalityData()) || { choices: [] };

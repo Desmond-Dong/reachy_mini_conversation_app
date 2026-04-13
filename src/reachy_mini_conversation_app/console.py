@@ -53,6 +53,11 @@ except Exception:  # pragma: no cover - only loaded when settings_app is used
 logger = logging.getLogger(__name__)
 
 
+HOME_ASSISTANT_URL_ENV = "HOME_ASSISTANT_MCP_URL"
+HOME_ASSISTANT_TOKEN_ENV = "HOME_ASSISTANT_TOKEN"
+HOME_ASSISTANT_ENABLED_ENV = "HOME_ASSISTANT_ENABLED"
+
+
 class LocalStream:
     """LocalStream using Reachy Mini's recorder/player."""
 
@@ -169,6 +174,70 @@ class LocalStream:
         except Exception as e:
             logger.warning("Failed to persist OPENAI_API_KEY: %s", e)
 
+    def _persist_home_assistant_config(self, enabled: bool, url: str | None = None, token: str | None = None) -> None:
+        """Persist Home Assistant MCP configuration without touching OpenAI settings."""
+        url_value = (url or "").strip()
+        token_value = (token or "").strip()
+
+        try:
+            os.environ[HOME_ASSISTANT_ENABLED_ENV] = "1" if enabled else "0"
+            if url_value:
+                os.environ[HOME_ASSISTANT_URL_ENV] = url_value
+            if token_value:
+                os.environ[HOME_ASSISTANT_TOKEN_ENV] = token_value
+        except Exception:
+            pass
+
+        if not self._instance_path:
+            return
+
+        try:
+            env_path = Path(self._instance_path) / ".env"
+            lines = self._read_env_lines(env_path)
+            updates = {
+                HOME_ASSISTANT_ENABLED_ENV: "1" if enabled else "0",
+                HOME_ASSISTANT_URL_ENV: url_value or None,
+                HOME_ASSISTANT_TOKEN_ENV: token_value or None,
+            }
+
+            for key, value in updates.items():
+                if value is None:
+                    continue
+                replaced = False
+                for i, ln in enumerate(lines):
+                    if ln.strip().startswith(f"{key}="):
+                        lines[i] = f"{key}={value}"
+                        replaced = True
+                        break
+                if not replaced:
+                    lines.append(f"{key}={value}")
+
+            final_text = "\n".join(lines) + "\n"
+            env_path.write_text(final_text, encoding="utf-8")
+            logger.info("Persisted Home Assistant config to %s", env_path)
+
+            try:
+                from dotenv import load_dotenv
+
+                load_dotenv(dotenv_path=str(env_path), override=True)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("Failed to persist Home Assistant config: %s", e)
+
+    def _read_home_assistant_config(self) -> dict[str, object]:
+        """Read current Home Assistant MCP configuration from the live environment."""
+        enabled_raw = os.getenv(HOME_ASSISTANT_ENABLED_ENV, "0").strip().lower()
+        enabled = enabled_raw in {"1", "true", "yes", "on"}
+        url = os.getenv(HOME_ASSISTANT_URL_ENV, "").strip()
+        token = os.getenv(HOME_ASSISTANT_TOKEN_ENV, "").strip()
+        return {
+            "enabled": enabled,
+            "configured": bool(url and token),
+            "url": url,
+            "has_token": bool(token),
+        }
+
     def _persist_personality(self, profile: Optional[str]) -> None:
         """Persist the startup personality to the instance .env and config."""
         if LOCKED_PROFILE is not None:
@@ -251,6 +320,11 @@ class LocalStream:
         class ApiKeyPayload(BaseModel):
             openai_api_key: str
 
+        class HomeAssistantPayload(BaseModel):
+            enabled: bool = False
+            url: str | None = None
+            token: str | None = None
+
         # GET / -> index.html
         @self._settings_app.get("/")
         def _root() -> FileResponse:
@@ -285,6 +359,29 @@ class LocalStream:
                 return JSONResponse({"ok": False, "error": "empty_key"}, status_code=400)
             self._persist_api_key(key)
             return JSONResponse({"ok": True})
+
+        @self._settings_app.get("/home_assistant_config")
+        def _get_home_assistant_config() -> JSONResponse:
+            return JSONResponse(self._read_home_assistant_config())
+
+        @self._settings_app.post("/home_assistant_config")
+        def _set_home_assistant_config(payload: HomeAssistantPayload) -> JSONResponse:
+            existing = self._read_home_assistant_config()
+            url = (payload.url or "").strip()
+            token = (payload.token or "").strip()
+            saved_url = str(existing.get("url") or "").strip()
+            has_saved_token = bool(existing.get("has_token"))
+
+            if payload.enabled:
+                effective_url = url or saved_url
+                effective_has_token = bool(token) or has_saved_token
+                if not effective_url:
+                    return JSONResponse({"ok": False, "error": "missing_home_assistant_url"}, status_code=400)
+                if not effective_has_token:
+                    return JSONResponse({"ok": False, "error": "missing_home_assistant_token"}, status_code=400)
+
+            self._persist_home_assistant_config(payload.enabled, url or None, token or None)
+            return JSONResponse({"ok": True, **self._read_home_assistant_config()})
 
         # POST /validate_api_key -> validate key without persisting it
         @self._settings_app.post("/validate_api_key")

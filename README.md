@@ -127,6 +127,9 @@ Some wheels (like PyTorch) are large and require compatible CUDA or CPU builds�
 |----------|-------------|
 | `OPENAI_API_KEY` | Required for OpenAI mode. Grants access to the OpenAI realtime endpoint. |
 | `GEMINI_API_KEY` | Required for Gemini mode. Also accepts `GOOGLE_API_KEY`. Get one at [aistudio.google.com](https://aistudio.google.com/apikey). |
+| `HOME_ASSISTANT_ENABLED` | Optional. Set to `1` to enable the built-in `home_assistant` MCP bridge tool. |
+| `HOME_ASSISTANT_MCP_URL` | Optional. Full Home Assistant MCP endpoint URL, for example `http://192.168.1.20:8123/api/mcp`. |
+| `HOME_ASSISTANT_TOKEN` | Optional. Home Assistant long-lived access token used for MCP authentication. |
 | `MODEL_NAME` | Which backend to use. `gpt-realtime` (default) for OpenAI, or `gemini-3.1-flash-live-preview` for Gemini Live. |
 | `HF_HOME` | Cache directory for local Hugging Face downloads (only used with `--local-vision` flag, defaults to `./cache`). |
 | `HF_TOKEN` | Optional token for Hugging Face access (for gated/private assets). |
@@ -204,6 +207,7 @@ reachy-mini-conversation-app --gradio
 | `play_emotion` | Play a recorded emotion clip via Hugging Face datasets. | Core install only. Uses the default open emotions dataset: [`pollen-robotics/reachy-mini-emotions-library`](https://huggingface.co/datasets/pollen-robotics/reachy-mini-emotions-library). |
 | `stop_emotion` | Clear queued emotions. | Core install only. |
 | `do_nothing` | Explicitly remain idle. | Core install only. |
+| `home_assistant` | Bridge to Home Assistant's MCP server for discovery, prompt lookup, and tool calls. | Requires `HOME_ASSISTANT_*` settings and a profile that enables the tool. |
 
 ## Advanced features
 
@@ -252,6 +256,8 @@ When running with `--gradio`, open the "Personality" accordion:
 - Select among available profiles (folders under `profiles/`) or the built‑in default.
 - Click "Apply" to update the current session instructions live.
 - Create a new personality by entering a name and instructions text. It stores files under `profiles/<name>/` and copies `tools.txt` from the `default` profile.
+
+When running in headless mode through the Reachy Mini Apps settings page, the `Credentials` section now has a separate `Home Assistant` card. Save the MCP URL and token there, then enable `home_assistant` in a profile. Tool list changes still require a restart because `tools.txt` is loaded at startup.
 
 Note: The "Personality" panel updates the conversation instructions. Tool sets are loaded at startup from `tools.txt` and are not hot‑reloaded.
 
