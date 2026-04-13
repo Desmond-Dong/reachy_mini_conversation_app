@@ -33,6 +33,7 @@ from reachy_mini_conversation_app.config import AVAILABLE_VOICES, config
 from reachy_mini_conversation_app.prompts import get_session_voice, get_session_instructions
 from reachy_mini_conversation_app.tools.core_tools import (
     ToolDependencies,
+    reload_tools,
     get_tool_specs,
 )
 from reachy_mini_conversation_app.tools.background_tool_manager import (
@@ -55,7 +56,6 @@ TEXT_OUTPUT_COST_PER_1M = 16.0
 IMAGE_INPUT_COST_PER_1M = 5.0
 
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
-
 
 
 class InputTranscriptChunksByItem(BaseModel):
@@ -154,6 +154,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             from reachy_mini_conversation_app.config import set_custom_profile
 
             set_custom_profile(profile)
+            reload_tools()
             logger.info(
                 "Set custom profile to %r (config=%r)", profile, getattr(_config, "REACHY_MINI_CUSTOM_PROFILE", None)
             )
@@ -215,6 +216,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     async def start_up(self) -> None:
         """Start the handler with minimal retries on unexpected websocket closure."""
+        reload_tools()
         openai_api_key = config.OPENAI_API_KEY
         if self.gradio_mode and not openai_api_key:
             # api key was not found in .env or in the environment variables
@@ -369,7 +371,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             tool_result = bg_tool.result
             logger.info(
                 "Tool '%s' (id=%s) executed successfully.",
-                bg_tool.tool_name, bg_tool.id,
+                bg_tool.tool_name,
+                bg_tool.id,
             )
             logger.debug("Tool '%s' full result: %s", bg_tool.tool_name, tool_result)
         else:
@@ -378,7 +381,11 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
         # Connection may have closed while tool was running
         if not self.connection:
-            logger.warning("Connection closed during tool '%s' (id=%s) execution; cannot send result back", bg_tool.tool_name, bg_tool.id)
+            logger.warning(
+                "Connection closed during tool '%s' (id=%s) execution; cannot send result back",
+                bg_tool.tool_name,
+                bg_tool.id,
+            )
             return
 
         try:
@@ -476,7 +483,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                             voice=get_session_voice(),
                         ),
                     ),
-                    tools=get_tool_specs(), # type: ignore[typeddict-item]
+                    tools=get_tool_specs(),  # type: ignore[typeddict-item]
                     tool_choice="auto",
                 )
                 await conn.session.update(session=session_config)
@@ -504,16 +511,13 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             except Exception:
                 pass
 
-
             response_sender_task: asyncio.Task[None] | None = None
             try:
                 # Start the background tool manager
                 self.tool_manager.start_up(tool_callbacks=[self._handle_tool_result])
 
                 # Start the response sender worker
-                response_sender_task = asyncio.create_task(
-                    self._response_sender_loop(), name="response-sender"
-                )
+                response_sender_task = asyncio.create_task(self._response_sender_loop(), name="response-sender")
 
                 async for event in self.connection:
                     logger.debug(f"OpenAI event: {event.type}")
@@ -595,7 +599,9 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     # Handle assistant transcription
                     if event.type == "response.output_audio_transcript.done":
                         logger.debug(f"Assistant transcript: {event.transcript}")
-                        await self.output_queue.put(AdditionalOutputs({"role": "assistant", "content": event.transcript}))
+                        await self.output_queue.put(
+                            AdditionalOutputs({"role": "assistant", "content": event.transcript})
+                        )
 
                     # Handle audio delta
                     if event.type == "response.output_audio.delta":
@@ -618,14 +624,19 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
                         logger.info(
                             "Tool call received — tool_name=%r, call_id=%s, is_idle=%s, args=%s",
-                            tool_name, call_id, self.is_idle_tool_call, args_json_str,
+                            tool_name,
+                            call_id,
+                            self.is_idle_tool_call,
+                            args_json_str,
                         )
 
                         if not isinstance(tool_name, str) or not isinstance(args_json_str, str):
                             logger.error(
                                 "Invalid tool call: tool_name=%s (type=%s), args=%s (type=%s), call_id=%s",
-                                tool_name, type(tool_name).__name__,
-                                args_json_str, type(args_json_str).__name__,
+                                tool_name,
+                                type(tool_name).__name__,
+                                args_json_str,
+                                type(args_json_str).__name__,
                                 call_id,
                             )
                             continue
@@ -652,7 +663,9 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         if self.is_idle_tool_call:
                             self.is_idle_tool_call = False
 
-                        logger.info("Started background tool: %s (id=%s, call_id=%s)", tool_name, bg_tool.tool_id, call_id)
+                        logger.info(
+                            "Started background tool: %s (id=%s, call_id=%s)", tool_name, bg_tool.tool_id, call_id
+                        )
 
                     # server error
                     if event.type == "error":

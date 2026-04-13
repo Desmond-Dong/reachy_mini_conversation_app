@@ -285,6 +285,16 @@ def _initialize_tools() -> None:
 _initialize_tools()
 
 
+def reload_tools() -> None:
+    """Reload the tool registry for the currently selected profile."""
+    global ALL_TOOLS, ALL_TOOL_SPECS, _TOOLS_INITIALIZED
+
+    ALL_TOOLS = {}
+    ALL_TOOL_SPECS = []
+    _TOOLS_INITIALIZED = False
+    _initialize_tools()
+
+
 def get_tool_specs(exclusion_list: list[str] = []) -> list[Dict[str, Any]]:
     """Get tool specs, optionally excluding some tools."""
     return [spec for spec in ALL_TOOL_SPECS if spec.get("name") not in exclusion_list]
