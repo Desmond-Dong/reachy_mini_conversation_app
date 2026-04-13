@@ -395,7 +395,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     item={
                         "type": "function_call_output",
                         "call_id": bg_tool.id,
-                        "output": json.dumps(tool_result),
+                        "output": json.dumps(tool_result, ensure_ascii=False),
                     },
                 )
 
@@ -403,7 +403,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 AdditionalOutputs(
                     {
                         "role": "assistant",
-                        "content": json.dumps(tool_result),
+                        "content": json.dumps(tool_result, ensure_ascii=False),
                         # Gradio UI metadata.status accept only "pending" and "done". Do not accept bg.tool.status values.
                         "metadata": {
                             "title": f"🛠️ Used tool {bg_tool.tool_name}",

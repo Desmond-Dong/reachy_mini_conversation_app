@@ -4,7 +4,9 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 from datetime import timedelta
+from urllib.parse import urlsplit, urlunsplit
 
+import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
@@ -75,22 +77,119 @@ def _should_retry_match_failure(result: Any) -> bool:
     return False
 
 
+def _extract_result_texts(result: Any) -> list[str]:
+    """Extract text payloads from an MCP tool result."""
+    dumped = _to_jsonable(result)
+    if not isinstance(dumped, dict):
+        return []
+    content = dumped.get("content")
+    if not isinstance(content, list):
+        return []
+
+    texts: list[str] = []
+    for item in content:
+        if isinstance(item, dict) and isinstance(item.get("text"), str):
+            texts.append(item["text"])
+    return texts
+
+
+def _build_diagnostic(tool_name: str, arguments: Dict[str, Any], result: Any) -> Dict[str, Any] | None:
+    """Translate common HA match failures into actionable diagnostics."""
+    texts = _extract_result_texts(result)
+    if not texts:
+        return None
+
+    combined = "\n".join(texts)
+    if "MatchFailedReason.ASSISTANT" in combined:
+        return {
+            "type": "assistant_exposure",
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "message": "Home Assistant refused the target because it is not exposed to the Assist/MCP assistant.",
+            "hint": "Expose the target entity to your Home Assistant voice assistant / MCP integration, then try again.",
+        }
+
+    if "cannot target all devices" in combined:
+        return {
+            "type": "missing_target",
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "message": "Home Assistant rejected the call because it could not resolve a specific target device or entity.",
+            "hint": "Use a more specific device name or expose the entity so Home Assistant can match it.",
+        }
+
+    return None
+
+
+def _conversation_api_url(mcp_url: str) -> str:
+    """Derive the Home Assistant conversation API URL from the MCP endpoint URL."""
+    parts = urlsplit(mcp_url)
+    path = parts.path
+    if path.endswith("/api/mcp"):
+        path = path[: -len("/api/mcp")] + "/api/conversation/process"
+    else:
+        path = "/api/conversation/process"
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+async def _call_assist_command(url: str, token: str, command: str, language: str | None) -> Dict[str, Any]:
+    """Send a natural-language command to Home Assistant's conversation API."""
+    payload: Dict[str, Any] = {"text": command}
+    if language:
+        payload["language"] = language
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(_conversation_api_url(url), headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+
+    plain = data if isinstance(data, dict) else {"raw": data}
+    response_text = None
+    try:
+        speech = plain.get("response", {}).get("speech", {})
+        plain_speech = speech.get("plain", {})
+        response_text = plain_speech.get("speech")
+    except Exception:
+        response_text = None
+
+    return {
+        "action": "assist_command",
+        "command": command,
+        "language": language,
+        "response_text": response_text,
+        "result": plain,
+    }
+
+
 class HomeAssistant(Tool):
     """Bridge Home Assistant's MCP server through a single tool."""
 
     name = "home_assistant"
     description = (
-        "Bridge to a Home Assistant MCP server. Use discover_tools first to inspect available Home Assistant "
-        "capabilities, then call_tool with the exact MCP tool name and arguments. Use get_prompt to fetch any "
-        "Home Assistant prompt guidance exposed by the MCP server."
+        "Bridge to Home Assistant. Prefer assist_command for natural-language home control requests so Home Assistant "
+        "can use its own conversation matching. Use discover_tools to inspect available MCP capabilities, call_tool "
+        "for exact MCP tool invocations, and get_prompt to fetch Home Assistant prompt guidance."
     )
     parameters_schema = {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["discover_tools", "get_prompt", "call_tool"],
+                "enum": ["assist_command", "discover_tools", "get_prompt", "call_tool"],
                 "description": "Which Home Assistant MCP action to perform.",
+            },
+            "command": {
+                "type": "string",
+                "description": "Required for assist_command. The user's natural-language Home Assistant request.",
+            },
+            "language": {
+                "type": "string",
+                "description": "Optional BCP-47 language code for assist_command, for example zh-CN or en-US.",
             },
             "tool_name": {
                 "type": "string",
@@ -127,10 +226,20 @@ class HomeAssistant(Tool):
             return {"error": "HOME_ASSISTANT_TOKEN is not configured."}
 
         action = str(kwargs.get("action") or "").strip()
+        command = str(kwargs.get("command") or "").strip()
+        language = str(kwargs.get("language") or "").strip() or None
         tool_name = str(kwargs.get("tool_name") or "").strip()
         prompt_name = str(kwargs.get("prompt_name") or "").strip()
         arguments = _extract_arguments(kwargs)
         headers = {"Authorization": f"Bearer {token}"}
+
+        if action == "assist_command":
+            if not command:
+                return {"error": "command is required for assist_command."}
+            try:
+                return await _call_assist_command(url, token, command, language)
+            except Exception as exc:
+                return {"error": f"Home Assistant assist command failed: {type(exc).__name__}: {exc}"}
 
         try:
             async with streamablehttp_client(
@@ -182,6 +291,7 @@ class HomeAssistant(Tool):
                             "tool_name": tool_name,
                             "arguments": arguments,
                             "result": _to_jsonable(result),
+                            "diagnostic": _build_diagnostic(tool_name, arguments, result),
                         }
 
                     return {"error": f"Unsupported action: {action}"}
