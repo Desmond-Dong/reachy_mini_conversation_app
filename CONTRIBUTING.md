@@ -11,7 +11,7 @@ We welcome all contributions: bug fixes, new features, documentation, testing, a
 
 1. Fork and clone the repo:
    ```bash
-   git clone https://github.com/pollen-robotics/reachy_mini_conversation_app
+   git clone https://github.com/Desmond-Dong/reachy_mini_conversation_app.git
    cd reachy_mini_conversation_app
    ```
 2. Follow the [README installation guide](README.md#installation) to set up dependencies and `.env`.

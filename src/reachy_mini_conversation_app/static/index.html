@@ -34,7 +34,7 @@
 
           <p>
             In privacy-sensitive environments, use <code>--local-vision</code> to process images on-device. See the
-            <a href="https://github.com/pollen-robotics/reachy_mini_conversation_app/blob/main/README.md" target="_blank" rel="noopener">
+            <a href="https://github.com/Desmond-Dong/reachy_mini_conversation_app/blob/main/README.md" target="_blank" rel="noopener">
               project README
             </a>
             for full setup instructions. An open-source approach is in the works – stay tuned for its release.
@@ -68,6 +68,32 @@
         <div class="actions">
           <button id="save-btn">Save key</button>
           <p id="status" class="status"></p>
+        </div>
+      </div>
+
+      <div id="home-assistant-panel" class="panel hidden">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Credentials</p>
+            <h2>Connect Home Assistant</h2>
+          </div>
+          <span class="chip">Optional</span>
+        </div>
+        <p class="muted">Save your Home Assistant MCP endpoint and token separately from the OpenAI key.</p>
+        <div class="row">
+          <label for="ha-enabled">Enable Home Assistant</label>
+          <input id="ha-enabled" type="checkbox" />
+        </div>
+        <div id="ha-fields" class="hidden">
+          <label for="ha-url">Home Assistant MCP URL</label>
+          <input id="ha-url" type="text" placeholder="http://192.168.1.20:8123/api/mcp" autocomplete="off" />
+          <label for="ha-token">Home Assistant Token</label>
+          <input id="ha-token" type="password" placeholder="Long-lived access token" autocomplete="off" />
+          <p id="ha-token-note" class="muted small hidden">A token is already saved. Leave the field blank to keep it.</p>
+        </div>
+        <div class="actions">
+          <button id="save-home-assistant">Save Home Assistant</button>
+          <p id="home-assistant-status" class="status"></p>
         </div>
       </div>
 
