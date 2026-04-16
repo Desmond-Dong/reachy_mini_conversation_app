@@ -252,9 +252,9 @@ class HomeAssistant(Tool):
                     await session.initialize()
 
                     if action == "discover_tools":
-                        result = await session.list_tools()
+                        tools_result = await session.list_tools()
                         tools = []
-                        for tool in getattr(result, "tools", []):
+                        for tool in getattr(tools_result, "tools", []):
                             tools.append(
                                 {
                                     "name": getattr(tool, "name", ""),
@@ -270,28 +270,28 @@ class HomeAssistant(Tool):
                     if action == "get_prompt":
                         if not prompt_name:
                             return {"error": "prompt_name is required for get_prompt."}
-                        result = await session.get_prompt(prompt_name, arguments=arguments or None)
+                        prompt_result = await session.get_prompt(prompt_name, arguments=arguments or None)
                         return {
                             "action": action,
-                            "prompt": _to_jsonable(result),
+                            "prompt": _to_jsonable(prompt_result),
                         }
 
                     if action == "call_tool":
                         if not tool_name:
                             return {"error": "tool_name is required for call_tool."}
-                        result = await session.call_tool(tool_name, arguments=arguments or None)
-                        if _should_retry_match_failure(result):
+                        tool_result = await session.call_tool(tool_name, arguments=arguments or None)
+                        if _should_retry_match_failure(tool_result):
                             for candidate_arguments in _build_retry_arguments(tool_name, arguments):
-                                result = await session.call_tool(tool_name, arguments=candidate_arguments or None)
+                                tool_result = await session.call_tool(tool_name, arguments=candidate_arguments or None)
                                 arguments = candidate_arguments
-                                if not _should_retry_match_failure(result):
+                                if not _should_retry_match_failure(tool_result):
                                     break
                         return {
                             "action": action,
                             "tool_name": tool_name,
                             "arguments": arguments,
-                            "result": _to_jsonable(result),
-                            "diagnostic": _build_diagnostic(tool_name, arguments, result),
+                            "result": _to_jsonable(tool_result),
+                            "diagnostic": _build_diagnostic(tool_name, arguments, tool_result),
                         }
 
                     return {"error": f"Unsupported action: {action}"}
